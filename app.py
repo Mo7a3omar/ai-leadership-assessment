@@ -2,6 +2,7 @@
 Fully Dynamic AI Leadership Assessment Engine
 Production-ready system with 100% AI-generated content
 7 Yes/No/Maybe + 7 MCQ + 1 Writing Scenario
+Enhanced with Multiple Arabic PDF Solutions
 """
 
 import streamlit as st
@@ -17,6 +18,17 @@ import re
 import os
 from dotenv import load_dotenv
 import logging
+import io
+import base64
+
+# PDF generation imports
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
+from reportlab.lib import colors
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 
 # Load environment variables
 load_dotenv()
@@ -54,7 +66,8 @@ CONTENT = {
         'generating_report': "📊 Generating your personalized report...",
         'report_title': "📊 Your Personalized Leadership Assessment Report",
         'overall_score': "Overall Score",
-        'download_report': "📄 Download Report",
+        'download_report': "📄 Download PDF Report",
+        'view_printable': "📄 View Printable Report",
         'new_assessment': "🔄 New Assessment",
         'api_error': "API Configuration Error",
         'api_missing': "Gemini API key not found. Please check your .env file.",
@@ -86,7 +99,8 @@ CONTENT = {
         'generating_report': "📊 جاري إنشاء تقريرك الشخصي...",
         'report_title': "📊 تقرير تقييم القيادة الشخصي",
         'overall_score': "النتيجة الإجمالية",
-        'download_report': "📄 تحميل التقرير",
+        'download_report': "📄 تحميل تقرير PDF",
+        'view_printable': "📄 عرض التقرير للطباعة",
         'new_assessment': "🔄 تقييم جديد",
         'api_error': "خطأ في إعدادات API",
         'api_missing': "لم يتم العثور على مفتاح Gemini API",
@@ -101,8 +115,444 @@ CONTENT = {
     }
 }
 
+class ArabicFontPDFGenerator:
+    """Enhanced PDF generator with Arabic font support."""
+    
+    def __init__(self, language='en'):
+        self.language = language
+        self.story = []
+        self.styles = getSampleStyleSheet()
+        self.arabic_font = self._register_arabic_font()
+        self._setup_styles()
+    
+    def _register_arabic_font(self):
+        """Register Arabic-compatible fonts."""
+        try:
+            # Try to register system fonts that support Arabic
+            font_paths = [
+                'C:/Windows/Fonts/arial.ttf',  # Windows
+                'C:/Windows/Fonts/calibri.ttf',
+                'C:/Windows/Fonts/tahoma.ttf',
+                '/System/Library/Fonts/Arial.ttf',  # macOS
+                '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',  # Linux
+                '/usr/share/fonts/TTF/arial.ttf'
+            ]
+            
+            for font_path in font_paths:
+                if os.path.exists(font_path):
+                    try:
+                        pdfmetrics.registerFont(TTFont('ArabicFont', font_path))
+                        return 'ArabicFont'
+                    except:
+                        continue
+        except Exception as e:
+            logger.warning(f"Font registration failed: {e}")
+        
+        return 'Helvetica'  # Fallback
+    
+    def _setup_styles(self):
+        """Setup styles with Arabic font support."""
+        if self.language == 'ar':
+            self.title_style = ParagraphStyle(
+                'ArabicTitle',
+                parent=self.styles['Title'],
+                fontSize=18,
+                alignment=TA_CENTER,
+                fontName=self.arabic_font,
+                spaceAfter=20,
+                textColor=colors.darkblue
+            )
+            
+            self.heading_style = ParagraphStyle(
+                'ArabicHeading',
+                parent=self.styles['Heading1'],
+                fontSize=14,
+                alignment=TA_RIGHT,
+                fontName=self.arabic_font,
+                spaceAfter=12,
+                textColor=colors.darkblue
+            )
+            
+            self.normal_style = ParagraphStyle(
+                'ArabicNormal',
+                parent=self.styles['Normal'],
+                fontSize=11,
+                alignment=TA_RIGHT,
+                fontName=self.arabic_font,
+                spaceAfter=8
+            )
+        else:
+            self.title_style = self.styles['Title']
+            self.heading_style = self.styles['Heading1']
+            self.normal_style = self.styles['Normal']
+    
+    def clean_arabic_text(self, text):
+        """Clean Arabic text for PDF rendering."""
+        if not text:
+            return ""
+        
+        text = str(text)
+        # Remove black squares and problematic characters
+        text = text.replace('■', '').replace('□', '').replace('▪', '')
+        
+        # For Arabic text, try to preserve as much as possible
+        if self.language == 'ar':
+            try:
+                # Try to process Arabic text
+                import arabic_reshaper
+                from bidi.algorithm import get_display
+                
+                reshaped_text = arabic_reshaper.reshape(text)
+                bidi_text = get_display(reshaped_text)
+                return bidi_text
+            except:
+                # If processing fails, return cleaned text
+                return text
+        
+        return text
+    
+    def add_title(self, title):
+        """Add title with proper Arabic support."""
+        clean_title = self.clean_arabic_text(title)
+        title_para = Paragraph(clean_title, self.title_style)
+        self.story.append(title_para)
+        self.story.append(Spacer(1, 20))
+    
+    def add_section(self, heading, content):
+        """Add section with Arabic support."""
+        clean_heading = self.clean_arabic_text(heading)
+        heading_para = Paragraph(clean_heading, self.heading_style)
+        self.story.append(heading_para)
+        
+        if isinstance(content, list):
+            for item in content:
+                clean_item = self.clean_arabic_text(item)
+                para = Paragraph(f"• {clean_item}", self.normal_style)
+                self.story.append(para)
+        else:
+            clean_content = self.clean_arabic_text(content)
+            para = Paragraph(clean_content, self.normal_style)
+            self.story.append(para)
+        
+        self.story.append(Spacer(1, 15))
+    
+    def generate_pdf(self):
+        """Generate PDF with Arabic support."""
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=50, leftMargin=50)
+        doc.build(self.story)
+        buffer.seek(0)
+        return buffer.getvalue()
+
+class HTMLReportGenerator:
+    """Generate HTML reports for browser-based PDF printing."""
+    
+    def __init__(self, language='en'):
+        self.language = language
+    
+    def generate_html_report(self, report_data: Dict, user_profile: Dict) -> str:
+        """Generate complete HTML report for printing."""
+        
+        if self.language == 'ar':
+            html_content = f'''
+            <!DOCTYPE html>
+            <html lang="ar" dir="rtl">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>تقرير تقييم القيادة الشخصي</title>
+                <style>
+                    @page {{
+                        size: A4;
+                        margin: 2cm;
+                        @bottom-center {{
+                            content: "صفحة " counter(page);
+                            font-size: 10px;
+                        }}
+                    }}
+                    
+                    body {{
+                        font-family: 'Segoe UI', 'Tahoma', 'Arial', sans-serif;
+                        font-size: 12px;
+                        line-height: 1.8;
+                        color: #333;
+                        direction: rtl;
+                        text-align: right;
+                        margin: 0;
+                        padding: 20px;
+                    }}
+                    
+                    .header {{
+                        text-align: center;
+                        border-bottom: 3px solid #2c5aa0;
+                        padding-bottom: 20px;
+                        margin-bottom: 30px;
+                    }}
+                    
+                    .title {{
+                        font-size: 24px;
+                        font-weight: bold;
+                        color: #2c5aa0;
+                        margin-bottom: 10px;
+                    }}
+                    
+                    .user-info {{
+                        background-color: #f8f9fa;
+                        padding: 20px;
+                        border-radius: 8px;
+                        margin-bottom: 25px;
+                        border-right: 4px solid #2c5aa0;
+                    }}
+                    
+                    .section-title {{
+                        font-size: 18px;
+                        font-weight: bold;
+                        color: #2c5aa0;
+                        border-bottom: 2px solid #2c5aa0;
+                        padding-bottom: 8px;
+                        margin-top: 30px;
+                        margin-bottom: 15px;
+                    }}
+                    
+                    .pillar-section {{
+                        background-color: #f8f9fa;
+                        padding: 15px;
+                        margin-bottom: 15px;
+                        border-radius: 5px;
+                        border-right: 4px solid #2c5aa0;
+                    }}
+                    
+                    .pillar-title {{
+                        font-size: 16px;
+                        font-weight: bold;
+                        color: #2c5aa0;
+                        margin-bottom: 10px;
+                    }}
+                    
+                    .score {{
+                        background-color: #2c5aa0;
+                        color: white;
+                        padding: 5px 15px;
+                        border-radius: 15px;
+                        font-weight: bold;
+                        display: inline-block;
+                        margin: 5px 0;
+                    }}
+                    
+                    .recommendation {{
+                        background-color: #e7f3ff;
+                        padding: 15px;
+                        margin: 10px 0;
+                        border-radius: 5px;
+                        border-right: 3px solid #2c5aa0;
+                    }}
+                    
+                    .goal-section {{
+                        margin-bottom: 20px;
+                    }}
+                    
+                    .goal-title {{
+                        font-size: 14px;
+                        font-weight: bold;
+                        color: #2c5aa0;
+                        margin-bottom: 10px;
+                    }}
+                    
+                    .no-print {{
+                        display: block;
+                    }}
+                    
+                    @media print {{
+                        .no-print {{
+                            display: none !important;
+                        }}
+                        body {{
+                            margin: 0;
+                            padding: 0;
+                        }}
+                    }}
+                    
+                    .print-button {{
+                        background-color: #2c5aa0;
+                        color: white;
+                        padding: 12px 24px;
+                        border: none;
+                        border-radius: 5px;
+                        font-size: 16px;
+                        cursor: pointer;
+                        margin: 20px 0;
+                        display: block;
+                        margin-right: auto;
+                        margin-left: auto;
+                    }}
+                    
+                    .print-button:hover {{
+                        background-color: #1e3a6f;
+                    }}
+                    
+                    ul {{
+                        padding-right: 20px;
+                    }}
+                    
+                    li {{
+                        margin-bottom: 8px;
+                    }}
+                </style>
+            </head>
+            <body>
+                <div class="no-print">
+                    <button class="print-button" onclick="window.print()">🖨️ طباعة التقرير كـ PDF</button>
+                    <p style="text-align: center; color: #666;">استخدم Ctrl+P أو اضغط على الزر أعلاه لطباعة التقرير</p>
+                </div>
+                
+                <div class="header">
+                    <div class="title">تقرير تقييم القيادة الشخصي</div>
+                    <p>تقييم شامل للمهارات القيادية باستخدام الذكاء الاصطناعي</p>
+                </div>
+                
+                <div class="user-info">
+                    <h3>معلومات المتقدم</h3>
+                    <p><strong>الاسم:</strong> {user_profile.get('name', 'غير متوفر')}</p>
+                    <p><strong>المنصب:</strong> {user_profile.get('current_position', 'غير متوفر')}</p>
+                    <p><strong>الصناعة:</strong> {user_profile.get('industry', 'غير متوفر')}</p>
+                    <p><strong>سنوات الخبرة:</strong> {user_profile.get('experience_years', 'غير متوفر')} سنة</p>
+                    <p><strong>تاريخ الإنشاء:</strong> {datetime.now().strftime('%Y/%m/%d')}</p>
+                </div>
+                
+                <div class="section-title">الملخص التنفيذي</div>
+                <p>{report_data.get('executive_summary', 'الملخص التنفيذي غير متوفر.')}</p>
+                
+                <div class="section-title">النتيجة الإجمالية للقيادة</div>
+                <p><span class="score">{report_data.get('overall_leadership_score', {}).get('score', 0):.1f}/10</span></p>
+                <p>{report_data.get('overall_leadership_score', {}).get('justification', 'المبرر غير متوفر.')}</p>
+                
+                <div class="section-title">تفصيل الملف القيادي</div>
+            '''
+            
+            # Add pillar sections
+            profile_breakdown = report_data.get('leadership_profile_breakdown', {})
+            arabic_pillars = [
+                "التفكير الاستراتيجي",
+                "قيادة التغيير والتكيف",
+                "التأثير والتواصل الفعّال",
+                "التمكين وتحفيز الآخرين",
+                "تحمل المسؤولية والمساءلة",
+                "الابتكار والتحسين المستمر"
+            ]
+            
+            for pillar in arabic_pillars:
+                pillar_data = profile_breakdown.get(pillar, {})
+                if pillar_data:
+                    score = pillar_data.get('score', 0)
+                    analysis = pillar_data.get('analysis', 'التحليل غير متوفر.')
+                    html_content += f'''
+                    <div class="pillar-section">
+                        <div class="pillar-title">{pillar} <span class="score">{score}/10</span></div>
+                        <p>{analysis}</p>
+                    </div>
+                    '''
+            
+            # Add other sections
+            html_content += f'''
+                <div class="section-title">نقاط القوة</div>
+                <p>{report_data.get('overall_strengths', 'تحليل نقاط القوة غير متوفر.')}</p>
+                
+                <div class="section-title">مجالات التطوير</div>
+                <p>{report_data.get('overall_development_areas', 'تحليل مجالات التطوير غير متوفر.')}</p>
+                
+                <div class="section-title">التوصيات الشخصية</div>
+            '''
+            
+            # Add recommendations
+            recommendations = report_data.get('personalized_recommendations', [])
+            for i, rec in enumerate(recommendations, 1):
+                html_content += f'<div class="recommendation">{i}. {rec}</div>'
+            
+            html_content += '''
+                <div class="section-title">خطة التطوير الشخصية</div>
+            '''
+            
+            # Add development plan
+            dev_plan = report_data.get('personal_development_plan', {})
+            if dev_plan:
+                html_content += '''
+                <div class="goal-section">
+                    <div class="goal-title">أهداف 30 يوم</div>
+                    <ul>
+                '''
+                for goal in dev_plan.get('30_day_goals', []):
+                    html_content += f'<li>{goal}</li>'
+                html_content += '</ul></div>'
+                
+                html_content += '''
+                <div class="goal-section">
+                    <div class="goal-title">أهداف 90 يوم</div>
+                    <ul>
+                '''
+                for goal in dev_plan.get('90_day_goals', []):
+                    html_content += f'<li>{goal}</li>'
+                html_content += '</ul></div>'
+                
+                html_content += '''
+                <div class="goal-section">
+                    <div class="goal-title">أهداف 6 أشهر</div>
+                    <ul>
+                '''
+                for goal in dev_plan.get('6_month_goals', []):
+                    html_content += f'<li>{goal}</li>'
+                html_content += '</ul></div>'
+            
+            # Add closing remarks
+            closing = report_data.get('closing_remarks')
+            if closing:
+                html_content += f'''
+                <div class="section-title">ملاحظات ختامية</div>
+                <p>{closing}</p>
+                '''
+            
+            html_content += '''
+                <div class="no-print">
+                    <button class="print-button" onclick="window.print()">🖨️ طباعة التقرير كـ PDF</button>
+                </div>
+            </body>
+            </html>
+            '''
+            
+        else:
+            # English HTML template (similar structure but left-aligned)
+            html_content = f'''
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <title>Leadership Assessment Report</title>
+                <style>
+                    body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                    .title {{ font-size: 24px; font-weight: bold; text-align: center; color: #2c5aa0; }}
+                    .section {{ margin: 20px 0; }}
+                    .print-button {{ background: #2c5aa0; color: white; padding: 10px 20px; border: none; cursor: pointer; }}
+                    @media print {{ .no-print {{ display: none; }} }}
+                </style>
+            </head>
+            <body>
+                <div class="no-print">
+                    <button class="print-button" onclick="window.print()">🖨️ Print as PDF</button>
+                </div>
+                <div class="title">Personal Leadership Assessment Report</div>
+                <div class="section">
+                    <h3>User Information</h3>
+                    <p><strong>Name:</strong> {user_profile.get('name', 'N/A')}</p>
+                    <p><strong>Position:</strong> {user_profile.get('current_position', 'N/A')}</p>
+                    <!-- Add other English content -->
+                </div>
+            </body>
+            </html>
+            '''
+        
+        return html_content
+
 class DynamicLeadershipAssessment:
-    """Production-ready dynamic AI assessment engine with 7+7+1 format."""
+    """Production-ready dynamic AI assessment engine with multiple Arabic PDF solutions."""
     
     def __init__(self):
         self.api_key = os.getenv('GEMINI_API_KEY')
@@ -151,9 +601,9 @@ class DynamicLeadershipAssessment:
     def _clean_and_parse_json(self, text: str) -> Dict:
         """Clean and parse JSON response with validation."""
         # Remove markdown formatting
-        text = re.sub(r'```json\n?', '', text)
+        text = re.sub(r'json\n?', '', text)
         text = re.sub(r'```\n?', '', text)
-        text = re.sub(r'```', '', text)
+        text = re.sub(r'', '', text)
         text = text.strip()
         
         try:
@@ -163,53 +613,6 @@ class DynamicLeadershipAssessment:
             logger.error(f"JSON parsing failed: {str(e)}")
             logger.error(f"Raw text: {text[:500]}...")
             raise Exception(f"Failed to parse AI response as JSON: {str(e)}")
-    
-    def _validate_and_fix_analysis(self, analysis: Dict) -> Dict:
-        """Validate and fix analysis scores to ensure they're within valid ranges."""
-        
-        # Fix overall score
-        try:
-            overall_score = float(analysis.get('overall_score', 7.0))
-            if not (1.0 <= overall_score <= 10.0):
-                overall_score = 7.0
-        except (ValueError, TypeError):
-            overall_score = 7.0
-        
-        # Fix pillar scores
-        pillar_scores = analysis.get('pillar_scores', {})
-        fixed_pillar_scores = {}
-        
-        for pillar in CONTENT['en']['pillars']:
-            try:
-                score = float(pillar_scores.get(pillar, 7.0))
-                if not (1.0 <= score <= 10.0):
-                    score = 7.0
-                fixed_pillar_scores[pillar] = score
-            except (ValueError, TypeError):
-                fixed_pillar_scores[pillar] = 7.0
-        
-        # Recalculate overall score from fixed pillar scores
-        analysis['overall_score'] = round(sum(fixed_pillar_scores.values()) / len(fixed_pillar_scores), 1)
-        analysis['pillar_scores'] = fixed_pillar_scores
-        
-        # Ensure other required fields exist
-        analysis.setdefault('leadership_level', 'Competent')
-        analysis.setdefault('strengths', ['Completed comprehensive assessment'])
-        analysis.setdefault('development_areas', ['Continue leadership development'])
-        analysis.setdefault('detailed_analysis', 'Analysis completed successfully.')
-        analysis.setdefault('personalized_recommendations', ['Focus on continuous improvement'])
-        analysis.setdefault('development_plan', {
-            '30_day_goals': ['Set specific development targets'],
-            '90_day_goals': ['Implement leadership improvements'],
-            '6_month_goals': ['Evaluate progress and adjust strategy']
-        })
-        analysis.setdefault('response_insights', {
-            'yes_no_patterns': 'Response patterns analyzed',
-            'mcq_patterns': 'Choice patterns reviewed',
-            'writing_quality': 'Writing response evaluated'
-        })
-        
-        return analysis
     
     def generate_comprehensive_yes_no_questions(self, language: str, user_profile: Dict) -> List[Dict]:
         """Generate 7 comprehensive Yes/No/Maybe questions covering all leadership pillars."""
@@ -399,10 +802,10 @@ class DynamicLeadershipAssessment:
         logger.info("Generated comprehensive personalized scenario question")
         return scenario
     
-    def analyze_responses_dynamically(self, responses: Dict, language: str, user_profile: Dict) -> Dict:
-        """Perform comprehensive analysis based on 7+7+1 responses."""
+    def generate_comprehensive_detailed_report(self, responses: Dict, language: str, user_profile: Dict) -> Dict:
+        """Generate comprehensive detailed report based on all responses using the enhanced prompt."""
         
-        lang_instruction = "in Arabic language only" if language == 'ar' else "in English language only"
+        lang_instruction = "English" if language == 'en' else "Arabic"
         
         # Prepare detailed response analysis
         response_analysis = ""
@@ -410,82 +813,212 @@ class DynamicLeadershipAssessment:
             response_analysis += f"\n{key}: {json.dumps(value, ensure_ascii=False)}"
         
         prompt = f"""
-        Perform a comprehensive, personalized leadership analysis {lang_instruction} based on this individual's specific responses to 7 Yes/No/Maybe questions, 7 MCQ questions, and 1 writing scenario.
+        Role: You are a highly experienced and meticulous Senior Leadership Consultant, specializing in AI-driven behavioral analysis and human potential development. Your task is to generate a full, highly detailed, and actionable leadership assessment report based exclusively on the provided user profile and their actual, verbatim responses to the assessment questions.
 
-        INDIVIDUAL PROFILE:
-        - Name: {user_profile.get('name')}
-        - Position: {user_profile.get('current_position')}
-        - Industry: {user_profile.get('industry')}
-        - Experience: {user_profile.get('experience_years')} years
-        - Leadership Experience: {user_profile.get('leadership_experience')} years
-        - Team Size: {user_profile.get('team_size')}
-        - Company Size: {user_profile.get('company_size')}
-        - Country: {user_profile.get('country')}
+        Goal: To provide the user with a report so thorough and insightful that it serves as a personalized coaching document, justifying every score, strength, and development area with direct references to their responses.
 
-        ACTUAL RESPONSES TO ANALYZE:
+        Input:
+        User Profile:
+        {json.dumps(user_profile, indent=2, ensure_ascii=False)}
+
+        User Responses (Verbatim):
         {response_analysis}
 
-        ANALYSIS REQUIREMENTS:
-        1. Analyze ACTUAL response patterns across all 15 questions
-        2. Scores must be numbers between 1.0 and 10.0 and reflect their specific answers
-        3. Identify specific behavioral patterns from their Yes/No, MCQ, and writing responses
-        4. Provide insights relevant to their role and industry
-        5. Consider their experience level in scoring and recommendations
-        6. Reference specific responses in your analysis
-        7. Weight the writing scenario more heavily in final scoring
-        8. Provide evidence-based assessment with examples from their responses
+        Language of Report: {lang_instruction}
 
-        Return ONLY valid JSON {lang_instruction}:
+        The output MUST be a single, valid JSON object following this exact structure. All textual content within the JSON must be in {lang_instruction}.
+
         {{
-            "overall_score": [MUST be a number between 1.0 and 10.0],
-            "pillar_scores": {{
-                "Strategic Thinking": [MUST be between 1.0 and 10.0],
-                "Leading Change & Adaptability": [MUST be between 1.0 and 10.0],
-                "Effective Communication & Influence": [MUST be between 1.0 and 10.0],
-                "Empowerment & Motivation": [MUST be between 1.0 and 10.0],
-                "Responsibility & Accountability": [MUST be between 1.0 and 10.0],
-                "Innovation & Continuous Improvement": [MUST be between 1.0 and 10.0]
+          "report_title": "Personalized Leadership Assessment Report for {user_profile.get('name')}",
+          "executive_summary": "A 3-5 paragraph executive summary. Focus on the most salient strengths and development areas from their responses, and the overall leadership style demonstrated.",
+
+          "overall_leadership_score": {{
+            "score": [float, 1.0-10.0, calculated based on ALL responses, weighted heavily by scenario],
+            "justification": "Detailed explanation (2-3 sentences) of how this overall score was derived, referring to general trends across their answers."
+          }},
+
+          "leadership_profile_breakdown": {{
+            "Strategic Thinking": {{
+              "score": [float, 1.0-10.0],
+              "analysis": "Detailed analysis (5-7 sentences) of their strategic thinking based on specific Y/N/M and MCQ answers related to strategy, and how their scenario response reflects strategic planning. Include direct references to their answers.",
+              "evidence_from_responses": [
+                "Quote/reference from Y/N/M/MCQ answer demonstrating strategic thinking.",
+                "Quote/reference from scenario response showcasing strategic depth."
+              ]
             }},
-            "leadership_level": "[based on scores and experience]",
-            "strengths": ["specific strengths from actual responses with examples"],
-            "development_areas": ["specific areas from actual responses with examples"],
-            "detailed_analysis": "comprehensive analysis referencing actual responses and patterns",
-            "personalized_recommendations": ["specific recommendations for their role and context"],
-            "development_plan": {{
-                "30_day_goals": ["specific 30-day actions based on their responses"],
-                "90_day_goals": ["specific 90-day actions based on their responses"],
-                "6_month_goals": ["specific 6-month actions based on their responses"]
+            "Leading Change & Adaptability": {{
+              "score": [float, 1.0-10.0],
+              "analysis": "Detailed analysis (5-7 sentences) based on their responses to change-related questions (Y/N/M, MCQ), and adaptability shown in the scenario. Include direct references.",
+              "evidence_from_responses": []
             }},
-            "response_insights": {{
-                "yes_no_patterns": "analysis of their Yes/No/Maybe response patterns",
-                "mcq_patterns": "analysis of their MCQ choice patterns",
-                "writing_quality": "analysis of their writing scenario response quality and depth"
+            "Effective Communication & Influence": {{
+              "score": [float, 1.0-10.0],
+              "analysis": "Detailed analysis (5-7 sentences) based on their communication and influence behaviors in answers (Y/N/M, MCQ) and the clarity/persuasiveness of their scenario response. Include direct references.",
+              "evidence_from_responses": []
+            }},
+            "Empowerment & Motivation": {{
+              "score": [float, 1.0-10.0],
+              "analysis": "Detailed analysis (5-7 sentences) based on their answers related to team development, delegation, and motivation, especially in the scenario's team management aspects. Include direct references.",
+              "evidence_from_responses": []
+            }},
+            "Responsibility & Accountability": {{
+              "score": [float, 1.0-10.0],
+              "analysis": "Detailed analysis (5-7 sentences) based on their answers showing ownership, follow-through, and handling of failure/success. Highlight instances from responses. Include direct references.",
+              "evidence_from_responses": []
+            }},
+            "Innovation & Continuous Improvement": {{
+              "score": [float, 1.0-10.0],
+              "analysis": "Detailed analysis (5-7 sentences) based on their answers reflecting creativity, problem-solving, and continuous learning. Highlight examples from their responses. Include direct references.",
+              "evidence_from_responses": []
             }}
+          }},
+
+          "overall_strengths": "A 2-3 paragraph summary detailing the user's primary leadership strengths observed across ALL responses, providing examples from different question types.",
+
+          "overall_development_areas": "A 2-3 paragraph summary detailing the most critical areas for development observed across ALL responses, explaining why these are crucial and how they manifested in their answers.",
+
+          "detailed_insights_from_response_types": {{
+            "yes_no_patterns": "Detailed analysis (5-7 sentences) of consistent patterns in their Yes/No/Maybe answers. For example, 'A consistent 'Yes' to questions about proactive risk management suggests a decisive, forward-thinking approach.'",
+            "mcq_choice_analysis": "Detailed analysis (5-7 sentences) of their choices in MCQs. Discuss if their choices reflected strategic thinking, ethical considerations, or a preference for certain leadership styles. Refer to specific MCQ scenarios.",
+            "scenario_writing_analysis": "In-depth analysis (7-10 sentences) of their writing scenario response. Evaluate its clarity, depth, comprehensiveness, originality, and how well it integrated multiple leadership competencies. Refer to specific elements of their response."
+          }},
+
+          "personalized_recommendations": [
+            "Specific, actionable recommendation 1, directly addressing a identified development area, linking to a specific response pattern. Provide a brief justification.",
+            "Specific, actionable recommendation 2, directly addressing another development area, linking to a specific response pattern. Provide a brief justification.",
+            "Specific, actionable recommendation 3, balancing a strength or another development area, with a brief justification."
+          ],
+
+          "personal_development_plan": {{
+            "30_day_goals": [
+              "Specific, measurable goal 1 (e.g., 'Identify 3 opportunities to delegate tasks to direct reports and empower them in decision-making, as noted in your scenario response hesitation regarding delegation.').",
+              "Specific, measurable goal 2."
+            ],
+            "90_day_goals": [
+              "Specific, measurable goal 1 (e.g., 'Lead a small change initiative, focusing on proactive communication and addressing team concerns, building on your Y/N answer patterns showing hesitancy towards direct confrontation in change.').",
+              "Specific, measurable goal 2."
+            ],
+            "6_month_goals": [
+              "Specific, measurable goal 1 (e.g., 'Develop and present a strategic proposal to senior management, incorporating detailed data analysis and stakeholder mapping, to enhance your strategic thinking skills identified in the MCQ challenges.').",
+              "Specific, measurable goal 2."
+            ]
+          }},
+
+          "cultural_and_industry_nuances": "A 2-3 paragraph analysis (if applicable) of how their responses and leadership style might be influenced by their stated country and industry. Suggest how to leverage or adapt this in their specific context. If not highly relevant, state briefly.",
+
+          "closing_remarks": "A concluding paragraph offering encouragement and emphasizing the continuous nature of leadership development."
         }}
 
-        CRITICAL SCORING REQUIREMENTS:
-        - ALL scores must be numbers between 1.0 and 10.0 (inclusive)
-        - Overall score should be the average of pillar scores
-        - Use decimal places (e.g., 7.5, 8.2) for precision
-        - Base scores on actual response quality and patterns
-        - All content must be {lang_instruction}
+        Key Instructions:
+        - RIGOROUSLY ADHERE TO JSON STRUCTURE: Do NOT deviate from the specified JSON keys, nesting, or data types.
+        - LANGUAGE: All generated text content within the JSON must be strictly in {lang_instruction}.
+        - EVIDENCE-BASED: Every single insight, score justification, strength, development area, and recommendation MUST be directly supported by, and explicitly reference, verbatim elements or patterns from the user's Actual Responses.
+        - DETAIL & DEPTH: Provide substantial, analytical text for each section. Avoid generic statements. Justify every claim.
+        - NO GUESSWORK: If a specific behavior cannot be inferred from the responses, state that the information is insufficient for a conclusive assessment in that specific area, rather than fabricating.
+        - COHERENCE: Ensure the entire report flows logically, with insights building upon each other.
+        - PROFESSIONAL TONE: Maintain a supportive, analytical, and encouraging tone throughout.
         """
         
         try:
             response_text = self._make_api_call_with_retry(prompt)
-            logger.info(f"Raw AI response: {response_text[:500]}...")
+            logger.info(f"Raw detailed report response: {response_text[:500]}...")
             
-            analysis = self._clean_and_parse_json(response_text)
-            logger.info(f"Parsed analysis overall_score: {analysis.get('overall_score')}")
+            detailed_report = self._clean_and_parse_json(response_text)
             
-            # Validate and fix analysis
-            analysis = self._validate_and_fix_analysis(analysis)
+            # Validate the detailed report structure
+            required_keys = [
+                'report_title', 'executive_summary', 'overall_leadership_score',
+                'leadership_profile_breakdown', 'overall_strengths', 'overall_development_areas',
+                'detailed_insights_from_response_types', 'personalized_recommendations',
+                'personal_development_plan', 'cultural_and_industry_nuances', 'closing_remarks'
+            ]
             
-            logger.info("Generated comprehensive personalized analysis based on 7+7+1 responses")
-            return analysis
+            for key in required_keys:
+                if key not in detailed_report:
+                    logger.warning(f"Missing key in detailed report: {key}")
+                    detailed_report[key] = f"Analysis for {key} not available"
+            
+            # Validate scores in the detailed report
+            if 'overall_leadership_score' in detailed_report and 'score' in detailed_report['overall_leadership_score']:
+                score = detailed_report['overall_leadership_score']['score']
+                if not isinstance(score, (int, float)) or not (1.0 <= score <= 10.0):
+                    detailed_report['overall_leadership_score']['score'] = 7.0
+            
+            # Validate pillar scores
+            if 'leadership_profile_breakdown' in detailed_report:
+                for pillar in CONTENT['en']['pillars']:
+                    if pillar in detailed_report['leadership_profile_breakdown']:
+                        pillar_data = detailed_report['leadership_profile_breakdown'][pillar]
+                        if 'score' in pillar_data:
+                            score = pillar_data['score']
+                            if not isinstance(score, (int, float)) or not (1.0 <= score <= 10.0):
+                                pillar_data['score'] = 7.0
+            
+            logger.info("Generated comprehensive detailed leadership report")
+            return detailed_report
+            
         except Exception as e:
-            logger.error(f"Analysis generation failed: {str(e)}")
+            logger.error(f"Detailed report generation failed: {str(e)}")
             raise
+    
+    def generate_enhanced_pdf_report(self, report_data: Dict, user_profile: Dict, language: str) -> bytes:
+        """Generate enhanced PDF with Arabic font support."""
+        try:
+            pdf_gen = ArabicFontPDFGenerator(language)
+            
+            # Add title
+            if language == 'ar':
+                pdf_gen.add_title("تقرير تقييم القيادة الشخصي")
+            else:
+                pdf_gen.add_title("Personal Leadership Assessment Report")
+            
+            # Add user information
+            if language == 'ar':
+                pdf_gen.add_section("معلومات المستخدم", [
+                    f"الاسم: {user_profile.get('name', 'غير متوفر')}",
+                    f"المنصب: {user_profile.get('current_position', 'غير متوفر')}",
+                    f"الصناعة: {user_profile.get('industry', 'غير متوفر')}",
+                    f"سنوات الخبرة: {user_profile.get('experience_years', 'غير متوفر')} سنة",
+                    f"تاريخ الإنشاء: {datetime.now().strftime('%Y/%m/%d')}"
+                ])
+            else:
+                pdf_gen.add_section("User Information", [
+                    f"Name: {user_profile.get('name', 'N/A')}",
+                    f"Position: {user_profile.get('current_position', 'N/A')}",
+                    f"Industry: {user_profile.get('industry', 'N/A')}",
+                    f"Experience: {user_profile.get('experience_years', 'N/A')} years",
+                    f"Generated: {datetime.now().strftime('%B %d, %Y')}"
+                ])
+            
+            # Add executive summary
+            if language == 'ar':
+                pdf_gen.add_section("الملخص التنفيذي", report_data.get('executive_summary', 'الملخص التنفيذي غير متوفر.'))
+            else:
+                pdf_gen.add_section("Executive Summary", report_data.get('executive_summary', 'Executive summary not available.'))
+            
+            # Add overall score
+            overall_score_data = report_data.get('overall_leadership_score', {})
+            overall_score = overall_score_data.get('score', 0)
+            
+            if language == 'ar':
+                pdf_gen.add_section(f"النتيجة الإجمالية للقيادة: {overall_score:.1f}/10", 
+                                  overall_score_data.get('justification', 'المبرر غير متوفر.'))
+            else:
+                pdf_gen.add_section(f"Overall Leadership Score: {overall_score:.1f}/10", 
+                                  overall_score_data.get('justification', 'Score justification not available.'))
+            
+            # Add other sections...
+            pdf_bytes = pdf_gen.generate_pdf()
+            return pdf_bytes
+            
+        except Exception as e:
+            logger.error(f"Enhanced PDF generation error: {str(e)}")
+            raise Exception(f"Failed to generate enhanced PDF: {str(e)}")
+    
+    def generate_html_report(self, report_data: Dict, user_profile: Dict, language: str) -> str:
+        """Generate HTML report for browser printing."""
+        html_gen = HTMLReportGenerator(language)
+        return html_gen.generate_html_report(report_data, user_profile)
 
 # Session state management
 def initialize_session_state():
@@ -498,7 +1031,7 @@ def initialize_session_state():
         'mcq_questions': [],
         'scenario_question': "",
         'responses': {},
-        'final_analysis': {},
+        'detailed_report': {},
         'assessment_engine': None,
         'start_time': None,
         'current_question_index': 0
@@ -556,8 +1089,8 @@ def display_welcome():
         **المميزات:**
         - لا توجد أسئلة محددة مسبقاً
         - تحليل شخصي مبني على إجاباتك الفعلية
+        - تقرير PDF باللغة العربية (محسّن ومطور)
         - خطة تطوير مخصصة لدورك ومجالك
-        - رؤى عميقة لأنماط قيادتك
         
         ✅ **محرك الذكاء الاصطناعي جاهز للتقييم الشامل**
         """)
@@ -573,8 +1106,8 @@ def display_welcome():
         **Features:**
         - No Predefined Questions
         - Personalized Analysis based on actual responses
+        - Enhanced PDF Report with Multiple Arabic Solutions
         - Custom Development Plan for your role and industry
-        - Deep Insights into your leadership patterns
         
         ✅ **AI Engine Ready for Comprehensive Assessment**
         """)
@@ -817,30 +1350,30 @@ def display_scenario_assessment():
             st.rerun()
     
     with col2:
-        if st.button("🎯 Generate Comprehensive Analysis" if lang == 'en' else "🎯 إنشاء التحليل الشامل", type="primary", use_container_width=True):
+        if st.button("🎯 Generate Detailed Report" if lang == 'en' else "🎯 إنشاء التقرير المفصل", type="primary", use_container_width=True):
             if len(response.strip()) < 100:
                 st.error("Please provide a more comprehensive response (at least 100 words)." if lang == 'en' else "يرجى تقديم إجابة أكثر شمولية (100 كلمة على الأقل).")
             else:
-                # Generate comprehensive analysis
-                with st.spinner("🧠 AI is analyzing all 15 responses (7+7+1) and creating your comprehensive report..." if lang == 'en' else "🧠 الذكاء الاصطناعي يحلل جميع الإجابات الـ15 (7+7+1) وينشئ تقريرك الشامل..."):
+                # Generate comprehensive detailed report using Gemini Flash[3]
+                with st.spinner("🧠 AI is analyzing all 15 responses (7+7+1) and creating your detailed report..." if lang == 'en' else "🧠 الذكاء الاصطناعي يحلل جميع الإجابات الـ15 (7+7+1) وينشئ تقريرك المفصل..."):
                     try:
-                        analysis = st.session_state.assessment_engine.analyze_responses_dynamically(
+                        detailed_report = st.session_state.assessment_engine.generate_comprehensive_detailed_report(
                             st.session_state.responses, lang, st.session_state.user_profile
                         )
-                        st.session_state.final_analysis = analysis
+                        st.session_state.detailed_report = detailed_report
                         st.session_state.assessment_phase = 'complete'
-                        st.success("🎉 Your comprehensive analysis is complete!" if lang == 'en' else "🎉 تحليلك الشامل مكتمل!")
+                        st.success("🎉 Your detailed report is complete!" if lang == 'en' else "🎉 تقريرك المفصل مكتمل!")
                         st.rerun()
                     except Exception as e:
-                        st.error(f"Failed to generate analysis: {str(e)}")
+                        st.error(f"Failed to generate detailed report: {str(e)}")
 
-def display_comprehensive_report():
-    """Display the comprehensive 7+7+1 analysis report."""
+def display_detailed_report():
+    """Display the comprehensive detailed report with multiple Arabic PDF solutions."""
     lang = st.session_state.language
     content = CONTENT[lang]
-    analysis = st.session_state.final_analysis
+    report = st.session_state.detailed_report
     
-    st.title(content['report_title'])
+    st.title(report.get('report_title', content['report_title']))
     
     # Report header with comprehensive details
     completion_time = datetime.now()
@@ -857,22 +1390,34 @@ def display_comprehensive_report():
     ---
     """)
     
-    # Comprehensive metrics
-    col1, col2, col3, col4 = st.columns(4)
+    # Executive Summary
+    st.subheader("📋 Executive Summary" if lang == 'en' else "📋 الملخص التنفيذي")
+    st.write(report.get('executive_summary', 'Executive summary not available.'))
+    
+    # Overall Leadership Score
+    st.subheader("🎯 Overall Leadership Assessment" if lang == 'en' else "🎯 التقييم القيادي الإجمالي")
+    
+    overall_score_data = report.get('overall_leadership_score', {})
+    overall_score = overall_score_data.get('score', 7.0)
+    
+    col1, col2 = st.columns(2)
     with col1:
-        st.metric(content['overall_score'], f"{analysis['overall_score']:.1f}/10")
+        st.metric("Overall Score" if lang == 'en' else "النتيجة الإجمالية", f"{overall_score:.1f}/10")
     with col2:
-        st.metric("Leadership Level" if lang == 'en' else "مستوى القيادة", analysis['leadership_level'])
-    with col3:
-        st.metric("Total Questions" if lang == 'en' else "إجمالي الأسئلة", "15 (7+7+1)")
-    with col4:
-        scenario_words = len(st.session_state.responses.get('scenario', '').split())
-        st.metric("Writing Response" if lang == 'en' else "الإجابة الكتابية", f"{scenario_words} words" if lang == 'en' else f"{scenario_words} كلمة")
+        st.write("**Justification:**" if lang == 'en' else "**المبرر:**")
+        st.write(overall_score_data.get('justification', 'Justification not available.'))
     
-    # Comprehensive radar chart
-    st.subheader("🎯 Your Leadership Profile" if lang == 'en' else "🎯 ملفك القيادي")
+    # Leadership Profile Breakdown
+    st.subheader("📊 Leadership Profile Breakdown" if lang == 'en' else "📊 تفصيل الملف القيادي")
     
-    pillar_scores = [analysis['pillar_scores'].get(pillar, 5.0) for pillar in content['pillars']]
+    profile_breakdown = report.get('leadership_profile_breakdown', {})
+    
+    # Create radar chart from detailed scores
+    pillar_scores = []
+    for pillar in content['pillars']:
+        pillar_data = profile_breakdown.get(pillar, {})
+        score = pillar_data.get('score', 5.0)
+        pillar_scores.append(score)
     
     fig = go.Figure()
     fig.add_trace(go.Scatterpolar(
@@ -888,110 +1433,149 @@ def display_comprehensive_report():
         polar=dict(
             radialaxis=dict(
                 visible=True, 
-                range=[0,10],
-                tickvals=[2,4,6,8,10],
+                range=[0, 10],
+                tickvals=[2, 4, 6, 8, 10],
                 tickmode='array'
             )
         ),
         showlegend=True,
-        title=f"Comprehensive Leadership Assessment (7+7+1) - {st.session_state.user_profile['name']}",
+        title=f"Detailed Leadership Assessment - {st.session_state.user_profile['name']}",
         height=500
     )
     
     st.plotly_chart(fig, use_container_width=True)
     
-    # Detailed analysis sections
+    # Detailed analysis for each pillar
+    for pillar in content['pillars']:
+        pillar_data = profile_breakdown.get(pillar, {})
+        if pillar_data:
+            with st.expander(f"📋 {pillar} - Score: {pillar_data.get('score', 'N/A')}/10", expanded=False):
+                st.write("**Analysis:**")
+                st.write(pillar_data.get('analysis', 'Analysis not available.'))
+                
+                evidence = pillar_data.get('evidence_from_responses', [])
+                if evidence:
+                    st.write("**Evidence from Your Responses:**" if lang == 'en' else "**أدلة من إجاباتك:**")
+                    for i, ev in enumerate(evidence, 1):
+                        st.write(f"{i}. {ev}")
+    
+    # Overall Strengths and Development Areas
     col1, col2 = st.columns(2)
     
     with col1:
         st.subheader("🌟 Your Strengths" if lang == 'en' else "🌟 نقاط قوتك")
-        for strength in analysis['strengths']:
-            st.success(f"-   {strength}")
+        st.write(report.get('overall_strengths', 'Strengths analysis not available.'))
     
     with col2:
-        st.subheader("📈 Development Opportunities" if lang == 'en' else "📈 فرص التطوير")
-        for area in analysis['development_areas']:
-            st.warning(f"-   {area}")
+        st.subheader("📈 Development Areas" if lang == 'en' else "📈 مجالات التطوير")
+        st.write(report.get('overall_development_areas', 'Development areas analysis not available.'))
     
-    # Comprehensive analysis
-    st.subheader("🔍 Comprehensive Analysis" if lang == 'en' else "🔍 التحليل الشامل")
-    st.write(analysis['detailed_analysis'])
-    
-    # Response pattern insights
-    if 'response_insights' in analysis:
-        st.subheader("📊 Response Pattern Analysis" if lang == 'en' else "📊 تحليل أنماط الإجابات")
+    # Detailed Insights from Response Types
+    insights = report.get('detailed_insights_from_response_types', {})
+    if insights:
+        st.subheader("🔍 Response Pattern Analysis" if lang == 'en' else "🔍 تحليل أنماط الإجابات")
         
         insight_col1, insight_col2, insight_col3 = st.columns(3)
         
         with insight_col1:
             st.markdown("**Yes/No/Maybe Patterns**" if lang == 'en' else "**أنماط نعم/لا/ربما**")
-            st.write(analysis['response_insights']['yes_no_patterns'])
+            st.write(insights.get('yes_no_patterns', 'Analysis not available.'))
         
         with insight_col2:
-            st.markdown("**MCQ Choice Patterns**" if lang == 'en' else "**أنماط الاختيارات متعددة الخيارات**")
-            st.write(analysis['response_insights']['mcq_patterns'])
+            st.markdown("**MCQ Choice Analysis**" if lang == 'en' else "**تحليل الاختيارات متعددة الخيارات**")
+            st.write(insights.get('mcq_choice_analysis', 'Analysis not available.'))
         
         with insight_col3:
-            st.markdown("**Writing Quality Analysis**" if lang == 'en' else "**تحليل جودة الكتابة**")
-            st.write(analysis['response_insights']['writing_quality'])
+            st.markdown("**Writing Analysis**" if lang == 'en' else "**تحليل الكتابة**")
+            st.write(insights.get('scenario_writing_analysis', 'Analysis not available.'))
     
-    # Personalized recommendations
-    st.subheader("💡 Your Personalized Recommendations" if lang == 'en' else "💡 توصياتك الشخصية")
-    for i, rec in enumerate(analysis['personalized_recommendations'], 1):
-        st.markdown(f"**{i}.** {rec}")
+    # Personalized Recommendations
+    st.subheader("💡 Personalized Recommendations" if lang == 'en' else "💡 التوصيات الشخصية")
+    recommendations = report.get('personalized_recommendations', [])
+    if recommendations:
+        for i, rec in enumerate(recommendations, 1):
+            st.markdown(f"**{i}.** {rec}")
+    else:
+        st.write("Recommendations not available.")
     
-    # Comprehensive development plan
-    st.subheader("📅 Your Personal Development Plan" if lang == 'en' else "📅 خطة التطوير الشخصية")
+    # Personal Development Plan
+    st.subheader("📅 Personal Development Plan" if lang == 'en' else "📅 خطة التطوير الشخصية")
     
-    plan_col1, plan_col2, plan_col3 = st.columns(3)
+    dev_plan = report.get('personal_development_plan', {})
+    if dev_plan:
+        plan_col1, plan_col2, plan_col3 = st.columns(3)
+        
+        with plan_col1:
+            st.markdown("**30-Day Goals**" if lang == 'en' else "**أهداف 30 يوم**")
+            goals_30 = dev_plan.get('30_day_goals', [])
+            for goal in goals_30:
+                st.write(f"- {goal}")
+        
+        with plan_col2:
+            st.markdown("**90-Day Goals**" if lang == 'en' else "**أهداف 90 يوم**")
+            goals_90 = dev_plan.get('90_day_goals', [])
+            for goal in goals_90:
+                st.write(f"- {goal}")
+        
+        with plan_col3:
+            st.markdown("**6-Month Goals**" if lang == 'en' else "**أهداف 6 أشهر**")
+            goals_6m = dev_plan.get('6_month_goals', [])
+            for goal in goals_6m:
+                st.write(f"- {goal}")
     
-    with plan_col1:
-        st.markdown("**30-Day Goals**" if lang == 'en' else "**أهداف 30 يوم**")
-        for goal in analysis['development_plan']['30_day_goals']:
-            st.write(f"-   {goal}")
+    # Cultural and Industry Nuances
+    cultural_analysis = report.get('cultural_and_industry_nuances')
+    if cultural_analysis:
+        st.subheader("🌍 Cultural & Industry Context" if lang == 'en' else "🌍 السياق الثقافي والصناعي")
+        st.write(cultural_analysis)
     
-    with plan_col2:
-        st.markdown("**90-Day Goals**" if lang == 'en' else "**أهداف 90 يوم**")
-        for goal in analysis['development_plan']['90_day_goals']:
-            st.write(f"-   {goal}")
+    # Closing Remarks
+    closing = report.get('closing_remarks')
+    if closing:
+        st.subheader("🎯 Closing Remarks" if lang == 'en' else "🎯 ملاحظات ختامية")
+        st.info(closing)
     
-    with plan_col3:
-        st.markdown("**6-Month Goals**" if lang == 'en' else "**أهداف 6 أشهر**")
-        for goal in analysis['development_plan']['6_month_goals']:
-            st.write(f"-   {goal}")
-    
-    # Action buttons
+    # Action buttons with multiple Arabic PDF solutions
     st.markdown("---")
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     
     with col1:
         if st.button(content['download_report'], use_container_width=True):
-            report_content = f"""
-# Comprehensive Leadership Assessment Report (7+7+1)
-## {st.session_state.user_profile['name']}
-
-**Position:** {st.session_state.user_profile['current_position']}
-**Industry:** {st.session_state.user_profile['industry']}
-**Assessment Format:** 7 Yes/No/Maybe + 7 MCQ + 1 Writing Scenario
-**Generated:** {completion_time.strftime('%B %d, %Y at %I:%M %p')}
-
-## Comprehensive Analysis Results
-{json.dumps(analysis, indent=2, ensure_ascii=False)}
-
-## User Profile
-{json.dumps(st.session_state.user_profile, indent=2, ensure_ascii=False)}
-
-## Complete Responses (15 Questions)
-{json.dumps(st.session_state.responses, indent=2, ensure_ascii=False)}
-            """
-            st.download_button(
-                label="Download Complete Report" if lang == 'en' else "تحميل التقرير الكامل",
-                data=report_content,
-                file_name=f"comprehensive_leadership_assessment_{st.session_state.user_profile['name'].replace(' ', '_')}_{completion_time.strftime('%Y%m%d')}.md",
-                mime="text/markdown"
-            )
+            try:
+                # Enhanced PDF with Arabic font support
+                with st.spinner("Generating enhanced PDF..." if lang == 'en' else "جاري إنشاء PDF محسّن..."):
+                    pdf_bytes = st.session_state.assessment_engine.generate_enhanced_pdf_report(
+                        report, st.session_state.user_profile, lang
+                    )
+                
+                st.download_button(
+                    label="📄 Download Enhanced PDF" if lang == 'en' else "📄 تحميل PDF محسّن",
+                    data=pdf_bytes,
+                    file_name=f"enhanced_leadership_report_{st.session_state.user_profile['name'].replace(' ', '_')}_{completion_time.strftime('%Y%m%d')}.pdf",
+                    mime="application/pdf"
+                )
+                st.success("Enhanced PDF ready!" if lang == 'en' else "PDF محسّن جاهز!")
+                
+            except Exception as e:
+                st.error(f"Enhanced PDF generation failed: {str(e)}")
     
     with col2:
+        if st.button(content['view_printable'], use_container_width=True):
+            try:
+                # HTML report for browser printing
+                html_report = st.session_state.assessment_engine.generate_html_report(
+                    report, st.session_state.user_profile, lang
+                )
+                
+                # Display HTML report in iframe
+                st.components.v1.html(html_report, height=800, scrolling=True)
+                
+                st.success("Use Ctrl+P to print as PDF from browser" if lang == 'en' else "استخدم Ctrl+P للطباعة كـ PDF من المتصفح")
+                
+            except Exception as e:
+                st.error(f"HTML report generation failed: {str(e)}")
+    
+    with col3:
         if st.button(content['new_assessment'], use_container_width=True):
             # Keep engine but reset everything else
             engine = st.session_state.assessment_engine
@@ -1001,12 +1585,12 @@ def display_comprehensive_report():
             st.session_state.assessment_engine = engine
             st.rerun()
     
-    with col3:
+    with col4:
         if st.button("📊 Assessment Analytics" if lang == 'en' else "📊 تحليلات التقييم", use_container_width=True):
             st.info("Advanced analytics coming soon" if lang == 'en' else "التحليلات المتقدمة قادمة قريباً")
 
 def main():
-    """Main application controller for comprehensive 7+7+1 assessment."""
+    """Main application controller with enhanced Arabic PDF support."""
     initialize_session_state()
     display_language_selector()
     
@@ -1028,10 +1612,11 @@ def main():
         elif st.session_state.assessment_phase == 'scenario':
             display_scenario_assessment()
         elif st.session_state.assessment_phase == 'complete':
-            display_comprehensive_report()
+            display_detailed_report()
     except Exception as e:
         st.error(f"Application error: {str(e)}")
         logger.error(f"Application error: {str(e)}")
 
 if __name__ == '__main__':
     main()
+
